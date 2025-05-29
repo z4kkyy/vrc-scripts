@@ -10,9 +10,8 @@ public class NotificationExample : UdonSharpBehaviour
 
     public override void Interact()
     {
-        base.Interact();
         notificationHandler.HideNotification();
-        
+
         int val = notificationCount % 3;
         switch (val)
         {
@@ -23,6 +22,7 @@ public class NotificationExample : UdonSharpBehaviour
                 notificationHandler.HandleNotification(NotificationType.Type2, "This is a Type 2 notification.");
                 break;
             default:
+                notificationHandler.HideNotification();
                 break;
         }
         notificationCount++;
