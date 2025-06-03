@@ -13,7 +13,7 @@ public class NotificationObject : UdonSharpBehaviour
 
     private void Start()
     {
-        messageText = GetComponentInChildren<TextMeshPro>();
+        messageText = GetComponent<TextMeshPro>();
         if (messageText == null)
         {
             Debug.LogError("Message Text component not found in NotificationObject.");
