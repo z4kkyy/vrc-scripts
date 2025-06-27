@@ -22,7 +22,7 @@ public class InteractiveNotification : UdonSharpBehaviour
         _notificationManager = notificationManager;
         _notificationId = notificationId;
 
-        _messageText = GetComponent<TextMeshPro>();
+        _messageText = GetComponentInChildren<TextMeshPro>();
         if (_messageText != null)
         {
             _messageText.text = string.IsNullOrEmpty(message) ? defaultMessage : message;

@@ -5,8 +5,8 @@ using VRC.SDKBase;
 
 public enum NotificationType
 {
-    Type1,     //  例: UdonBehaviour なし
-    Type2,     //  例: UdonBehaviour あり
+    Type1,     //  Interact の UdonBehaviour なし
+    Type2,     //  Interact の UdonBehaviour あり
     // Type3, Type4, ...
 }
 
@@ -16,19 +16,20 @@ public class NotificationManager : UdonSharpBehaviour
     [SerializeField] private GameObject[] notificationPrefabs;
 
     [Header("Display Settings")]
-    [SerializeField] private float displayDuration = 5.0f;
-    [SerializeField] private Vector3 displayOffset = new Vector3(0f, -0.2f, 0.5f);
+    [SerializeField] private Vector3 displayOffset;
 
     // public
     public int LastNotificationType { get; private set; } = -1;
     public int NotificationId { get; private set; } = -1;
-    public bool HasActiveNotification => _currentNotification != null;
+    public bool HasActiveNotification => _currentNotificationObject != null;
 
     // private
     private VRCPlayerApi _localPlayer;
-    private GameObject _currentNotification;
+    private GameObject _currentNotificationObject;
+    private string _currentMessage = string.Empty;
+    private float _currentDestroyTime = -1f;  // -1の時は時間経過での削除は行わない
+    private int _currentDestroyCountDown = 0;
     private int _notificationCounter = 0;
-    private int _scheduledNotificationId = -1;
 
     void Start()
     {
@@ -39,13 +40,89 @@ public class NotificationManager : UdonSharpBehaviour
         }
     }
 
-    public void ShowNotification(NotificationType type, string message)
+    private void Update()
     {
-        //　注意: 既存の通知がある場合は上書き
-        if (_currentNotification != null)
+        if (_currentDestroyTime > 0f && _currentNotificationObject != null)
         {
-            Destroy(_currentNotification);
-            _currentNotification = null;
+            if (Time.time >= _currentDestroyTime)
+            {
+                Destroy(_currentNotificationObject);
+                _currentNotificationObject = null;
+                _currentDestroyTime = -1f;
+                Debug.Log($"NotificationManager: Destroyed current notification with ID: {NotificationId} after timeout");
+            }
+            else
+            {
+                _currentDestroyCountDown = Mathf.CeilToInt(_currentDestroyTime - Time.time);
+                if (_currentDestroyCountDown < 0)
+                {
+                    _currentDestroyCountDown = 0;
+                }
+                Debug.Log($"NotificationManager: Current notification ID: {NotificationId}, Countdown: {_currentDestroyCountDown}");
+
+                TextMeshPro messageText = _currentNotificationObject.GetComponentInChildren<TextMeshPro>();
+                if (messageText != null)
+                {
+                    messageText.text = $"{_currentMessage} ({_currentDestroyCountDown})";
+                }
+                else
+                {
+                    Debug.LogWarning("NotificationManager: TextMeshPro component not found in current notification object");
+                }
+            }
+        }
+    }
+
+    public override void PostLateUpdate()
+    {
+        if (_currentNotificationObject != null && _localPlayer != null)
+        {
+            GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
+            _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
+        }
+    }
+
+    private void GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation)
+    {
+        if (_localPlayer == null)
+        {
+            Debug.LogWarning("NotificationManager: Local player is null when calculating head front position");
+            position = Vector3.zero;
+            rotation = Quaternion.identity;
+            return;
+        }
+
+        var headPosition = _localPlayer.GetBonePosition(HumanBodyBones.Head);
+        var headRotation = _localPlayer.GetBoneRotation(HumanBodyBones.Head);
+
+        // 顔前面に配置するため、前方向ベクトルを計算
+        Vector3 forwardDirection = headRotation * Vector3.forward;
+        Vector3 upDirection = headRotation * Vector3.up;
+        Vector3 rightDirection = headRotation * Vector3.right;
+
+        // オフセットを頭部座標系で計算
+        position = headPosition +
+                  (rightDirection * displayOffset.x) +
+                  (upDirection * displayOffset.y) +
+                  (forwardDirection * displayOffset.z);
+
+        rotation = headRotation;
+    }
+
+    public void ShowNotification(NotificationType type, string message, int timeout = -1)
+    {
+        if (string.IsNullOrEmpty(message))
+        {
+            Debug.LogError("NotificationManager: Cannot show notification with empty message");
+            return;
+        }
+
+        _currentMessage = message;
+        //　既存の通知がある場合は上書き
+        if (_currentNotificationObject != null)
+        {
+            Destroy(_currentNotificationObject);
+            _currentNotificationObject = null;
         }
 
         int idx = (int)type;
@@ -64,29 +141,22 @@ public class NotificationManager : UdonSharpBehaviour
         _notificationCounter = (_notificationCounter + 1) % 100000;  // avoid overflow
         NotificationId = _notificationCounter;
         LastNotificationType = idx;
+        _currentDestroyTime = timeout > 0 ? Time.time + timeout : -1f;
+        Debug.Log($"NotificationManager: Scheduled for ID: {NotificationId}, Destroy time: {_currentDestroyTime}");
 
-        // 通知オブジェクトの生成・配置
-        // 注意: 一旦プレイヤーの頭部前面に配置
-        // A Simple Fishing Worldのワールドのメニューみたいに、手に追従する形にするのもありかも。
-        // https://vrchat.com/home/launch?worldId=wrld_ab93c6a0-d158-4e07-88fe-f8f222018faa
-        var headPosition = _localPlayer.GetBonePosition(HumanBodyBones.Head);
-        var headRotation = _localPlayer.GetBoneRotation(HumanBodyBones.Head);
-        Vector3 worldOffset = headRotation * displayOffset;
-        Vector3 position = headPosition + worldOffset;
+        GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
 
-        _currentNotification = Instantiate(notificationPrefabs[idx]);
-        _currentNotification.transform.SetPositionAndRotation(position, headRotation);
+        _currentNotificationObject = Instantiate(notificationPrefabs[idx]);
+        _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
 
-        InteractiveNotification interactive = _currentNotification.GetComponent<InteractiveNotification>();
+        InteractiveNotification interactive = _currentNotificationObject.GetComponent<InteractiveNotification>();
         if (interactive != null)
         {
-            // can interact
             interactive.Show(message, this, NotificationId);
         }
         else
         {
-            // cannot interact
-            TextMeshPro text = _currentNotification.GetComponent<TextMeshPro>();
+            TextMeshPro text = _currentNotificationObject.GetComponentInChildren<TextMeshPro>();
             if (text == null)
             {
                 Debug.LogError("NotificationManager: TextMeshPro component not found in notification prefab");
@@ -94,11 +164,6 @@ public class NotificationManager : UdonSharpBehaviour
             }
 
             text.text = message;
-
-            // schedule destroy after displayDuration
-            _scheduledNotificationId = NotificationId;
-            SendCustomEventDelayedSeconds(nameof(DestroyCurrentDelayed), displayDuration);
-            Debug.Log($"NotificationManager: Scheduled notification with ID: {NotificationId}");
         }
     }
 
@@ -118,30 +183,31 @@ public class NotificationManager : UdonSharpBehaviour
         }
 
         DestroyCurrent();
-    }
 
-    public void DestroyCurrentDelayed()
-    {
-        if (_scheduledNotificationId == NotificationId && _currentNotification != null)
+        // 適当にテレポート
+        // 実際にはmatch making router的なのに接続
+        if (_localPlayer != null)
         {
-            Destroy(_currentNotification);
-            _currentNotification = null;
-            _scheduledNotificationId = -1;
-            Debug.Log($"NotificationManager: Destroyed current notification with ID: {NotificationId}");
-        }
-        else
-        {
-            Debug.LogWarning("NotificationManager: No current notification to destroy or ID mismatch");
+            Vector3 currentPosition = _localPlayer.GetPosition();
+            Vector3 randomDirection = new Vector3(
+                Random.Range(-1f, 1f),
+                0f,
+                Random.Range(-1f, 1f)
+            ).normalized;
+            Vector3 teleportPosition = currentPosition + randomDirection * 1.0f;
+
+            _localPlayer.TeleportTo(teleportPosition, _localPlayer.GetRotation());
+            Debug.Log($"NotificationManager: Teleported player to {teleportPosition}");
         }
     }
 
     public void DestroyCurrent()
     {
-        if (_currentNotification != null)
+        if (_currentNotificationObject != null)
         {
-            Destroy(_currentNotification);
-            _currentNotification = null;
-            _scheduledNotificationId = -1;
+            Destroy(_currentNotificationObject);
+            _currentNotificationObject = null;
+            _currentDestroyTime = -1f;
         }
     }
 
