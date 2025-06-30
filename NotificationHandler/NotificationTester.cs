@@ -10,15 +10,41 @@ public class NotificationTester : UdonSharpBehaviour
     public override void Interact()
     {
         NotificationType type = _notifID % 2 == 0 ?
-            NotificationType.Type1 : NotificationType.Type2; ;
+            NotificationType.Type1 : NotificationType.Type2;
 
-        string playerDisplayname = _notifID % 2 == 0 ?
-            "z4kky_y" : "nabar1x";
+        string playerDisplayname = string.Empty;
+        int timeout = 0;
+
+        if (_notifID % 4 == 0)
+        {
+            playerDisplayname = "z4kky_y";
+            timeout = 10;
+        }
+        else if (_notifID % 4 == 1)
+        {
+            playerDisplayname = "nabar1x";
+            timeout = 5;
+        }
+        else if (_notifID % 4 == 2)
+        {
+            playerDisplayname = "myun_";
+            timeout = -1;
+        }
+        else if (_notifID % 4 == 3)
+        {
+            playerDisplayname = "torisan1048";
+            timeout = -1;
+        }
+        else
+        {
+            playerDisplayname = "Unknown Player";
+            timeout = 0;
+        }
 
         notificationManager.ShowNotification(
             type,
             playerDisplayname,
-            10
+            timeout
         );
 
         _notifID++;

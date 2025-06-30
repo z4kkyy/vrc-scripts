@@ -13,35 +13,53 @@ public enum NotificationType
     Count,
 }
 
+public enum NotificationResponse
+{
+    None = 0,  // No interaction
+    Yes = 1,   // User clicked "Yes"
+    No = 2,    // User clicked "No"
+}
+
 [UdonBehaviourSyncMode(BehaviourSyncMode.NoVariableSync)]
 public class NotificationManager : UdonSharpBehaviour
 {
+    /* Serialize Fields */
     [Header("Notification Prefabs")]
     [SerializeField] private GameObject[] notificationPrefabs;
 
     [Header("Position Settings")]
     [SerializeField] private Vector3 displayOffset = new Vector3(0f, 0f, 1f);  // 頭部の前方
 
-    // public
+    [Header("Animation Settings")]
+    [SerializeField] private float spawnAnimationDuration = 0.5f;
+    [SerializeField] private float destroyAnimationDuration = 0.5f;
+
+    /* public */
     public int NotificationInteracted { get; private set; } = 0;  // 0: not interacted, 1: yes, 2: no
     public int LastNotificationType { get; private set; } = -1;
-    public int NotificationId { get; private set; } = -1;
+    public int NotificationId { get; private set; } = -1;  // Unique ID
     public bool HasActiveNotification => _currentNotificationObject != null;
 
-    // private
+    /* private */
     private VRCPlayerApi _localPlayer;
     private GameObject _currentNotificationObject;
-    private string _currentMessage = string.Empty;
     private float _currentDestroyTime = 0;
     private int _currentDestroyCountDown = 0;
-    private int _currentDestroyTimeout = 0;  // -1の時は時間経過での削除は行わない
+    private int _currentDestroyTimeout = 0;  // <= 0 means no timeout
     private int _notificationCounter = 0;
+
+    // spawn animation
+    private bool _isSpawnAnimationRunning = false;
+    private float _spawnAnimationStartTime;
+    private Vector3 _spawnAnimationTargetScale;
+
+    // destroy animation
+    private bool _isDestroyAnimationRunning = false;
+    private float _destroyAnimationStartTime;
+    private Vector3 _destroyAnimationStartScale;
 
     // constants
     private const int NOTIFICATION_COUNTER_MAX = 100000;
-    private const int INTERACTION_NONE = 0;
-    private const int INTERACTION_YES = 1;
-    private const int INTERACTION_NO = 2;
 
     void Start()
     {
@@ -64,69 +82,167 @@ public class NotificationManager : UdonSharpBehaviour
         }
     }
 
-    // 1. Destroy notification after timeout
-    // 2. Update countdown timer UI
     private void Update()
     {
+        // Check if notification is active and has a destroy time set
         if (_currentDestroyTime > 0f && _currentNotificationObject != null)
         {
-            if (Time.time >= _currentDestroyTime)
+            // If destroy time reached
+            if (Time.time >= _currentDestroyTime && !_isDestroyAnimationRunning)
             {
-                Destroy(_currentNotificationObject);
-                _currentNotificationObject = null;
-                _currentDestroyTime = -1f;
-                Debug.Log($"NotificationManager: Destroyed current notification with ID: {NotificationId} after timeout");
+                StartDestroyAnimation();
             }
             else
             {
+                // Update countdown
                 _currentDestroyCountDown = Mathf.CeilToInt(_currentDestroyTime - Time.time);
                 if (_currentDestroyCountDown < 0)
                 {
                     _currentDestroyCountDown = 0;
                 }
 
-                Transform timerCountdownInt = _currentNotificationObject.transform.Find("Canvas/Timer/Countdown Int");
-                if (timerCountdownInt != null)
+                UpdateTimerUI();
+            }
+        }
+
+        if (_isSpawnAnimationRunning && _currentNotificationObject != null)
+        {
+            UpdateSpawnAnimation();
+        }
+
+        if (_isDestroyAnimationRunning && _currentNotificationObject != null)
+        {
+            UpdateDestroyAnimation();
+        }
+    }
+
+    private void UpdateTimerUI()
+    {
+        Transform timerCountdownInt = _currentNotificationObject.transform.Find("Canvas/Timer/Countdown Int");
+        if (timerCountdownInt != null)
+        {
+            TextMeshProUGUI countdownText = timerCountdownInt.GetComponent<TextMeshProUGUI>();
+            if (countdownText != null)
+            {
+                countdownText.text = _currentDestroyCountDown.ToString();
+                Transform timerCountdownImage = _currentNotificationObject.transform.Find("Canvas/Timer/Fill Image");
+                if (timerCountdownImage != null)
                 {
-                    TextMeshProUGUI countdownText = timerCountdownInt.GetComponent<TextMeshProUGUI>();
-                    if (countdownText != null)
+                    // Update the fill image
+                    Image fillImage = timerCountdownImage.GetComponent<Image>();
+                    float remainingDuration = _currentDestroyTime - Time.time;
+                    if (fillImage != null)
                     {
-                        countdownText.text = _currentDestroyCountDown.ToString();
-                        Transform timerCountdownImage = _currentNotificationObject.transform.Find("Canvas/Timer/Fill Image");
-                        if (timerCountdownImage != null)
-                        {
-                            Image fillImage = timerCountdownImage.GetComponent<Image>();
-                            float remainingDuration = _currentDestroyTime - Time.time;
-                            if (fillImage != null)
-                            {
-                                fillImage.fillAmount = Mathf.InverseLerp(0, _currentDestroyTimeout, remainingDuration);
-                            }
-                            else
-                            {
-                                Debug.LogWarning("NotificationManager: Fill Image component not found in Timer Countdown Image");
-                            }
-                        }
-                        else
-                        {
-                            Debug.LogWarning("NotificationManager: Timer Countdown Image Transform not found in current notification object");
-                        }
+                        fillImage.fillAmount = Mathf.InverseLerp(0, _currentDestroyTimeout, remainingDuration);
                     }
                     else
                     {
-                        Debug.LogWarning("NotificationManager: Countdown Int TextMeshPro component not found");
+                        Debug.LogWarning("NotificationManager: Fill Image component not found in Timer Countdown Image");
                     }
                 }
                 else
                 {
-                    Debug.LogWarning("NotificationManager: Countdown Int Transform not found in current notification object");
+                    Debug.LogWarning("NotificationManager: Timer Countdown Image Transform not found in current notification object");
                 }
             }
+            else
+            {
+                Debug.LogWarning("NotificationManager: Countdown Int TextMeshPro component not found");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("NotificationManager: Countdown Int Transform not found in current notification object");
+        }
+    }
+
+    private void UpdateSpawnAnimation()
+    {
+        float elapsedTime = Time.time - _spawnAnimationStartTime;
+        float progress = Mathf.Clamp01(elapsedTime / spawnAnimationDuration);
+
+        if (progress >= 1f)
+        {
+            _currentNotificationObject.transform.localScale = _spawnAnimationTargetScale;
+            _isSpawnAnimationRunning = false;
+        }
+        else
+        {
+            float scaleValue = EaseOutBack(progress);
+            _currentNotificationObject.transform.localScale = _spawnAnimationTargetScale * scaleValue;
+        }
+    }
+
+    private void UpdateDestroyAnimation()
+    {
+        float elapsedTime = Time.time - _destroyAnimationStartTime;
+        float progress = Mathf.Clamp01(elapsedTime / destroyAnimationDuration);
+
+        if (progress >= 1f)
+        {
+            DestroyCurrentNotification();
+        }
+        else
+        {
+            float scaleValue = EaseInBack(progress);
+            _currentNotificationObject.transform.localScale = _destroyAnimationStartScale * (1f - scaleValue);
+        }
+    }
+
+    private void StartSpawnAnimation()
+    {
+        if (_currentNotificationObject == null) return;
+
+        _spawnAnimationTargetScale = _currentNotificationObject.transform.localScale;
+        _currentNotificationObject.transform.localScale = Vector3.zero;
+        _isSpawnAnimationRunning = true;
+        _spawnAnimationStartTime = Time.time;
+        _isDestroyAnimationRunning = false;
+    }
+
+    private void StartDestroyAnimation()
+    {
+        if (_currentNotificationObject == null) return;
+
+        _destroyAnimationStartScale = _currentNotificationObject.transform.localScale;
+        _isDestroyAnimationRunning = true;
+        _destroyAnimationStartTime = Time.time;
+        _isSpawnAnimationRunning = false;
+    }
+
+
+    // Creates an "overshoot" effect
+    private float EaseOutBack(float t)
+    {
+        float c1 = 1.70158f;
+        float c3 = c1 + 1f;
+        return 1f + c3 * Mathf.Pow(t - 1f, 3f) + c1 * Mathf.Pow(t - 1f, 2f);
+    }
+
+    // Creates a "backswing" effect
+    private float EaseInBack(float t)
+    {
+        float c1 = 1.70158f;
+        float c3 = c1 + 1f;
+        return c3 * t * t * t - c1 * t * t;
+    }
+
+    private void DestroyCurrentNotification()
+    {
+        if (_currentNotificationObject != null)
+        {
+            Destroy(_currentNotificationObject);
+            _currentNotificationObject = null;
+            _currentDestroyTime = -1f;
+            _isDestroyAnimationRunning = false;
+            _isSpawnAnimationRunning = false;
         }
     }
 
     // Update notification position and rotation based on head front
     public override void PostLateUpdate()
     {
+        // Update the position and rotation
         if (_currentNotificationObject != null && _localPlayer != null)
         {
             GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
@@ -169,10 +285,10 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
-        //　既存の通知がある場合は上書き
+        // If there is an active notification, destroy it first
         if (_currentNotificationObject != null)
         {
-            Destroy(_currentNotificationObject);
+            DestroyCurrentNotification();
             _currentNotificationObject = null;
         }
 
@@ -189,9 +305,12 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
+        // Set public properties
+        ResetNotificationInteracted();
         NotificationId = _notificationCounter;
         LastNotificationType = idx;
 
+        // Set private properties
         _notificationCounter = (_notificationCounter + 1) % NOTIFICATION_COUNTER_MAX;  // avoid overflow
         _currentDestroyTime = timeout > 0 ? Time.time + timeout : -1f;
         _currentDestroyCountDown = timeout > 0 ? timeout : 0;
@@ -199,10 +318,14 @@ public class NotificationManager : UdonSharpBehaviour
 
         Debug.Log($"NotificationManager: Scheduled for ID: {NotificationId}, Destroy time: {_currentDestroyTime}");
 
-        GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
-
+        // Instantiate!
         _currentNotificationObject = Instantiate(notificationPrefabs[idx]);
+
+        // Set the position and rotation
+        GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
         _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
+
+        StartSpawnAnimation();
 
         // Add opponent's displayname
         Transform playerDisplaynameText = _currentNotificationObject.transform.Find("Player Displayname");
@@ -212,7 +335,7 @@ public class NotificationManager : UdonSharpBehaviour
             if (playerDisplaynameTextTMP != null)
             {
                 playerDisplaynameTextTMP.text += $" {playerDisplayname}";
-                Debug.Log($"NotificationManager: Player display name set to '{playerDisplayname}'");
+                Debug.Log($"NotificationManager: Player displayname set to '{playerDisplayname}'");
             }
         }
         else
@@ -220,17 +343,24 @@ public class NotificationManager : UdonSharpBehaviour
             Debug.LogWarning("NotificationManager: Player Displayname Transform not found in notification prefab");
         }
 
+        // Hide the timer if timeout <= 0
         Transform countDownTimerTransform = _currentNotificationObject.transform.Find("Canvas/Timer");
-        if (timeout <= 0)
+        if (countDownTimerTransform == null)
+        {
+            Debug.LogWarning("NotificationManager: Timer Transform not found in notification prefab");
+        }
+        else if (timeout <= 0)
         {
             countDownTimerTransform.gameObject.SetActive(false);
         }
 
+        // Initialize YesButton and NoButton
         YesButton yesButton = _currentNotificationObject.GetComponentInChildren<YesButton>();
         NoButton noButton = _currentNotificationObject.GetComponentInChildren<NoButton>();
         if (yesButton == null || noButton == null)
         {
             Debug.LogError("NotificationManager: YesButton or NoButton component not found in notification prefab");
+            DestroyCurrentNotification();
             return;
         }
 
@@ -248,7 +378,6 @@ public class NotificationManager : UdonSharpBehaviour
                 Debug.LogError($"NotificationManager: Unsupported notification type: {type}");
                 break;
         }
-
     }
 
     public void OnYesButtonInteract(YesButton notification)
@@ -259,6 +388,7 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
+        // Validate ID
         int notificationId = notification.NotificationId;
         if (notificationId != NotificationId)
         {
@@ -266,10 +396,9 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
-        DestroyCurrent();
+        NotificationInteracted = (int)NotificationResponse.Yes;
 
-        NotificationType type = GetCurrentNotificationType();
-        NotificationInteracted = INTERACTION_YES;
+        StartDestroyAnimation();
     }
 
     public void OnNoButtonInteract(NoButton notification)
@@ -280,6 +409,7 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
+        // Validate ID
         int notificationId = notification.NotificationId;
         if (notificationId != NotificationId)
         {
@@ -287,26 +417,15 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
-        DestroyCurrent();
+        NotificationInteracted = (int)NotificationResponse.No;
 
-        NotificationType type = GetCurrentNotificationType();
-        NotificationInteracted = INTERACTION_NO;
+        StartDestroyAnimation();
     }
 
     public void ResetNotificationInteracted()
     {
-        NotificationInteracted = INTERACTION_NONE;
-        Debug.Log("NotificationManager: NotificationInteracted reset to 0");
-    }
-
-    private void DestroyCurrent()
-    {
-        if (_currentNotificationObject != null)
-        {
-            Destroy(_currentNotificationObject);
-            _currentNotificationObject = null;
-            _currentDestroyTime = -1f;
-        }
+        NotificationInteracted = (int)NotificationResponse.None;
+        Debug.Log("NotificationManager: NotificationInteracted reset to None");
     }
 
     public int GetCurrentNotificationId()
