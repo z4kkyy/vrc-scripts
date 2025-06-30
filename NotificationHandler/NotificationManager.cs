@@ -2,23 +2,28 @@ using TMPro;
 using UdonSharp;
 using UnityEngine;
 using VRC.SDKBase;
+using UnityEngine.UI;
 
 public enum NotificationType
 {
-    Type1,     //  Interact の UdonBehaviour なし
-    Type2,     //  Interact の UdonBehaviour あり
-    // Type3, Type4, ...
+    Type1,  // EN
+    Type2,  // JP
+
+    // Constant, DO NOT CHANGE
+    Count,
 }
 
 [UdonBehaviourSyncMode(BehaviourSyncMode.NoVariableSync)]
 public class NotificationManager : UdonSharpBehaviour
 {
+    [Header("Notification Prefabs")]
     [SerializeField] private GameObject[] notificationPrefabs;
 
-    [Header("Display Settings")]
-    [SerializeField] private Vector3 displayOffset;
+    [Header("Position Settings")]
+    [SerializeField] private Vector3 displayOffset = new Vector3(0f, 0f, 1f);  // 頭部の前方
 
     // public
+    public int NotificationInteracted { get; private set; } = 0;  // 0: not interacted, 1: yes, 2: no
     public int LastNotificationType { get; private set; } = -1;
     public int NotificationId { get; private set; } = -1;
     public bool HasActiveNotification => _currentNotificationObject != null;
@@ -27,8 +32,9 @@ public class NotificationManager : UdonSharpBehaviour
     private VRCPlayerApi _localPlayer;
     private GameObject _currentNotificationObject;
     private string _currentMessage = string.Empty;
-    private float _currentDestroyTime = -1f;  // -1の時は時間経過での削除は行わない
+    private float _currentDestroyTime = 0;
     private int _currentDestroyCountDown = 0;
+    private int _currentDestroyTimeout = 0;  // -1の時は時間経過での削除は行わない
     private int _notificationCounter = 0;
 
     void Start()
@@ -38,8 +44,22 @@ public class NotificationManager : UdonSharpBehaviour
         {
             Debug.LogError("NotificationManager: Error getting local player");
         }
+
+        if (notificationPrefabs == null || notificationPrefabs.Length == 0)
+        {
+            Debug.LogError("NotificationManager: No notification prefabs assigned");
+            return;
+        }
+
+        if (notificationPrefabs.Length != (int)NotificationType.Count)
+        {
+            Debug.LogError("NotificationManager: Not enough notification prefabs for NotificationType enum");
+            return;
+        }
     }
 
+    // 1. Destroy notification after timeout
+    // 2. Update countdown timer UI
     private void Update()
     {
         if (_currentDestroyTime > 0f && _currentNotificationObject != null)
@@ -58,27 +78,61 @@ public class NotificationManager : UdonSharpBehaviour
                 {
                     _currentDestroyCountDown = 0;
                 }
-                Debug.Log($"NotificationManager: Current notification ID: {NotificationId}, Countdown: {_currentDestroyCountDown}");
 
-                TextMeshPro messageText = _currentNotificationObject.GetComponentInChildren<TextMeshPro>();
-                if (messageText != null)
+                Transform timerCountdownInt = _currentNotificationObject.transform.Find("Canvas/Timer/Countdown Int");
+                if (timerCountdownInt != null)
                 {
-                    messageText.text = $"{_currentMessage} ({_currentDestroyCountDown})";
+                    TextMeshProUGUI countdownText = timerCountdownInt.GetComponent<TextMeshProUGUI>();
+                    if (countdownText != null)
+                    {
+                        countdownText.text = _currentDestroyCountDown.ToString();
+                        Transform timerCountdownImage = _currentNotificationObject.transform.Find("Canvas/Timer/Fill Image");
+                        if (timerCountdownImage != null)
+                        {
+                            Image fillImage = timerCountdownImage.GetComponent<Image>();
+                            float remainingDuration = _currentDestroyTime - Time.time;
+                            if (fillImage != null)
+                            {
+                                fillImage.fillAmount = Mathf.InverseLerp(0, _currentDestroyTimeout, remainingDuration);
+                            }
+                            else
+                            {
+                                Debug.LogWarning("NotificationManager: Fill Image component not found in Timer Countdown Image");
+                            }
+                        }
+                        else
+                        {
+                            Debug.LogWarning("NotificationManager: Timer Countdown Image Transform not found in current notification object");
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogWarning("NotificationManager: Countdown Int TextMeshPro component not found");
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning("NotificationManager: TextMeshPro component not found in current notification object");
+                    Debug.LogWarning("NotificationManager: Countdown Int Transform not found in current notification object");
                 }
             }
         }
     }
 
+    // Update notification position and rotation based on head front
     public override void PostLateUpdate()
     {
         if (_currentNotificationObject != null && _localPlayer != null)
         {
             GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
             _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
+        }
+        else if (_currentNotificationObject == null)
+        {
+            // Debug.LogWarning("NotificationManager: Current notification object is null in PostLateUpdate");
+        }
+        else if (_localPlayer == null)
+        {
+            // Debug.LogWarning("NotificationManager: Local player is null in PostLateUpdate");
         }
     }
 
@@ -109,15 +163,14 @@ public class NotificationManager : UdonSharpBehaviour
         rotation = headRotation;
     }
 
-    public void ShowNotification(NotificationType type, string message, int timeout = -1)
+    public void ShowNotification(NotificationType type, string playerDisplayname, int timeout = -1)
     {
-        if (string.IsNullOrEmpty(message))
+        if (string.IsNullOrEmpty(playerDisplayname))
         {
-            Debug.LogError("NotificationManager: Cannot show notification with empty message");
+            Debug.LogError("NotificationManager: Cannot show notification with empty player display name");
             return;
         }
 
-        _currentMessage = message;
         //　既存の通知がある場合は上書き
         if (_currentNotificationObject != null)
         {
@@ -138,10 +191,14 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
-        _notificationCounter = (_notificationCounter + 1) % 100000;  // avoid overflow
         NotificationId = _notificationCounter;
         LastNotificationType = idx;
+
+        _notificationCounter = (_notificationCounter + 1) % 100000;  // avoid overflow
         _currentDestroyTime = timeout > 0 ? Time.time + timeout : -1f;
+        _currentDestroyCountDown = timeout > 0 ? timeout : 0;
+        _currentDestroyTimeout = timeout > 0 ? timeout : 0;
+
         Debug.Log($"NotificationManager: Scheduled for ID: {NotificationId}, Destroy time: {_currentDestroyTime}");
 
         GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
@@ -149,25 +206,48 @@ public class NotificationManager : UdonSharpBehaviour
         _currentNotificationObject = Instantiate(notificationPrefabs[idx]);
         _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
 
-        InteractiveNotification interactive = _currentNotificationObject.GetComponent<InteractiveNotification>();
-        if (interactive != null)
+        // Add opponent's displayname
+        Transform playerDisplaynameText = _currentNotificationObject.transform.Find("Player Displayname");
+        if (playerDisplaynameText != null)
         {
-            interactive.Show(message, this, NotificationId);
+            TextMeshPro playerDisplaynameTextTMP = playerDisplaynameText.GetComponent<TextMeshPro>();
+            if (playerDisplaynameTextTMP != null)
+            {
+                playerDisplaynameTextTMP.text += $" {playerDisplayname}";
+                Debug.Log($"NotificationManager: Player display name set to '{playerDisplayname}'");
+            }
         }
         else
         {
-            TextMeshPro text = _currentNotificationObject.GetComponentInChildren<TextMeshPro>();
-            if (text == null)
-            {
-                Debug.LogError("NotificationManager: TextMeshPro component not found in notification prefab");
-                return;
-            }
-
-            text.text = message;
+            Debug.LogWarning("NotificationManager: Player Displayname Transform not found in notification prefab");
         }
+
+        YesButton yesButton = _currentNotificationObject.GetComponentInChildren<YesButton>();
+        NoButton noButton = _currentNotificationObject.GetComponentInChildren<NoButton>();
+        if (yesButton == null || noButton == null)
+        {
+            Debug.LogError("NotificationManager: YesButton or NoButton component not found in notification prefab");
+            return;
+        }
+
+        switch (type)
+        {
+            case NotificationType.Type1:
+                yesButton.Init(this, NotificationId);
+                noButton.Init(this, NotificationId);
+                break;
+            case NotificationType.Type2:
+                yesButton.Init(this, NotificationId);
+                noButton.Init(this, NotificationId);
+                break;
+            default:
+                Debug.LogError($"NotificationManager: Unsupported notification type: {type}");
+                break;
+        }
+
     }
 
-    public void OnNotificationInteracted(InteractiveNotification notification)
+    public void OnYesButtonInteract(YesButton notification)
     {
         if (notification == null)
         {
@@ -175,7 +255,7 @@ public class NotificationManager : UdonSharpBehaviour
             return;
         }
 
-        int notificationId = notification.GetNotificationId();
+        int notificationId = notification.NotificationId;
         if (notificationId != NotificationId)
         {
             Debug.LogWarning($"NotificationManager: Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
@@ -184,24 +264,38 @@ public class NotificationManager : UdonSharpBehaviour
 
         DestroyCurrent();
 
-        // 適当にテレポート
-        // 実際にはmatch making router的なのに接続
-        if (_localPlayer != null)
-        {
-            Vector3 currentPosition = _localPlayer.GetPosition();
-            Vector3 randomDirection = new Vector3(
-                Random.Range(-1f, 1f),
-                0f,
-                Random.Range(-1f, 1f)
-            ).normalized;
-            Vector3 teleportPosition = currentPosition + randomDirection * 1.0f;
-
-            _localPlayer.TeleportTo(teleportPosition, _localPlayer.GetRotation());
-            Debug.Log($"NotificationManager: Teleported player to {teleportPosition}");
-        }
+        NotificationType type = GetCurrentNotificationType();
+        NotificationInteracted = 1;  // Yes
     }
 
-    public void DestroyCurrent()
+    public void OnNoButtonInteract(NoButton notification)
+    {
+        if (notification == null)
+        {
+            Debug.LogError("NotificationManager: Notification is null on interaction");
+            return;
+        }
+
+        int notificationId = notification.NotificationId;
+        if (notificationId != NotificationId)
+        {
+            Debug.LogWarning($"NotificationManager: Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
+            return;
+        }
+
+        DestroyCurrent();
+
+        NotificationType type = GetCurrentNotificationType();
+        NotificationInteracted = 2;  // Yes
+    }
+
+    public void ResetNotificationInteracted()
+    {
+        NotificationInteracted = 0;
+        Debug.Log("NotificationManager: NotificationInteracted reset to 0");
+    }
+
+    private void DestroyCurrent()
     {
         if (_currentNotificationObject != null)
         {

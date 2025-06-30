@@ -10,10 +10,17 @@ public class NotificationTester : UdonSharpBehaviour
     public override void Interact()
     {
         NotificationType type = _notifID % 2 == 0 ?
-            NotificationType.Type1 : NotificationType.Type2;
-        // NotificationType type = 0;
-        string message = $"Test message {++_notifID} for {type}";
+            NotificationType.Type1 : NotificationType.Type2; ;
 
-        notificationManager.ShowNotification(type, message, type == NotificationType.Type1 ? 3 : -1);
+        string playerDisplayname = _notifID % 2 == 0 ?
+            "z4kky_y" : "nabar1x";
+
+        notificationManager.ShowNotification(
+            type,
+            playerDisplayname,
+            10
+        );
+
+        _notifID++;
     }
 }
