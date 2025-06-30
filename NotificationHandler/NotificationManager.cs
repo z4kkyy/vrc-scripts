@@ -37,6 +37,12 @@ public class NotificationManager : UdonSharpBehaviour
     private int _currentDestroyTimeout = 0;  // -1の時は時間経過での削除は行わない
     private int _notificationCounter = 0;
 
+    // constants
+    private const int NOTIFICATION_COUNTER_MAX = 100000;
+    private const int INTERACTION_NONE = 0;
+    private const int INTERACTION_YES = 1;
+    private const int INTERACTION_NO = 2;
+
     void Start()
     {
         _localPlayer = Networking.LocalPlayer;
@@ -126,14 +132,6 @@ public class NotificationManager : UdonSharpBehaviour
             GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
             _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
         }
-        else if (_currentNotificationObject == null)
-        {
-            // Debug.LogWarning("NotificationManager: Current notification object is null in PostLateUpdate");
-        }
-        else if (_localPlayer == null)
-        {
-            // Debug.LogWarning("NotificationManager: Local player is null in PostLateUpdate");
-        }
     }
 
     private void GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation)
@@ -194,7 +192,7 @@ public class NotificationManager : UdonSharpBehaviour
         NotificationId = _notificationCounter;
         LastNotificationType = idx;
 
-        _notificationCounter = (_notificationCounter + 1) % 100000;  // avoid overflow
+        _notificationCounter = (_notificationCounter + 1) % NOTIFICATION_COUNTER_MAX;  // avoid overflow
         _currentDestroyTime = timeout > 0 ? Time.time + timeout : -1f;
         _currentDestroyCountDown = timeout > 0 ? timeout : 0;
         _currentDestroyTimeout = timeout > 0 ? timeout : 0;
@@ -271,7 +269,7 @@ public class NotificationManager : UdonSharpBehaviour
         DestroyCurrent();
 
         NotificationType type = GetCurrentNotificationType();
-        NotificationInteracted = 1;  // Yes
+        NotificationInteracted = INTERACTION_YES;
     }
 
     public void OnNoButtonInteract(NoButton notification)
@@ -292,12 +290,12 @@ public class NotificationManager : UdonSharpBehaviour
         DestroyCurrent();
 
         NotificationType type = GetCurrentNotificationType();
-        NotificationInteracted = 2;  // Yes
+        NotificationInteracted = INTERACTION_NO;
     }
 
     public void ResetNotificationInteracted()
     {
-        NotificationInteracted = 0;
+        NotificationInteracted = INTERACTION_NONE;
         Debug.Log("NotificationManager: NotificationInteracted reset to 0");
     }
 
