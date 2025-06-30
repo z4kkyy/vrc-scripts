@@ -222,6 +222,12 @@ public class NotificationManager : UdonSharpBehaviour
             Debug.LogWarning("NotificationManager: Player Displayname Transform not found in notification prefab");
         }
 
+        Transform countDownTimerTransform = _currentNotificationObject.transform.Find("Canvas/Timer");
+        if (timeout <= 0)
+        {
+            countDownTimerTransform.gameObject.SetActive(false);
+        }
+
         YesButton yesButton = _currentNotificationObject.GetComponentInChildren<YesButton>();
         NoButton noButton = _currentNotificationObject.GetComponentInChildren<NoButton>();
         if (yesButton == null || noButton == null)
