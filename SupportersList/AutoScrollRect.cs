@@ -19,6 +19,7 @@ public class AutoScrollRect : UdonSharpBehaviour
     private void Start()
     {
         scrollRect = GetComponent<ScrollRect>();
+        t = 0;
     }
 
     private void Update()
@@ -34,47 +35,45 @@ public class AutoScrollRect : UdonSharpBehaviour
             return;
         }
 
-        t += Time.deltaTime;
+        switch (state)
+        {
+            case ScrollState.StoppedTop:
+                t += Time.deltaTime;
+                if (t > timeAtTop)
+                {
+                    t = 0;
+                    state = ScrollState.ScrollDown;
+                }
+                break;
 
-        if (state == ScrollState.StoppedTop)
-        {
-            if (t > timeAtTop)
-            {
-                t = 0;
-                state = ScrollState.ScrollDown;
-            }
-        }
-        else if (state == ScrollState.StoppedBottom)
-        {
-            if (t > timeAtBottom)
-            {
-                t = 0;
-                state = ScrollState.ScrollUp;
-            }
-        }
-        else if (state == ScrollState.ScrollDown)
-        {
-            if (scrollRect.verticalNormalizedPosition >= 1)
-            {
-                t = 0;
-                state = ScrollState.StoppedBottom;
-            }
-            else
-            {
-                scrollRect.verticalNormalizedPosition += progressPerSec * Time.deltaTime;
-            }
-        }
-        else
-        {
-            if (scrollRect.verticalNormalizedPosition <= 0)
-            {
-                t = 0;
-                state = ScrollState.StoppedTop;
-            }
-            else
-            {
+            case ScrollState.StoppedBottom:
+                t += Time.deltaTime;
+                if (t > timeAtBottom)
+                {
+                    t = 0;
+                    state = ScrollState.ScrollUp;
+                }
+                break;
+
+            case ScrollState.ScrollDown:
                 scrollRect.verticalNormalizedPosition -= progressPerSec * Time.deltaTime;
-            }
+
+                if (scrollRect.verticalNormalizedPosition <= 0f)
+                {
+                    t = 0;
+                    state = ScrollState.StoppedBottom;
+                }
+                break;
+
+            case ScrollState.ScrollUp:
+                scrollRect.verticalNormalizedPosition += progressPerSec * Time.deltaTime;
+
+                if (scrollRect.verticalNormalizedPosition >= 1f)
+                {
+                    t = 0;
+                    state = ScrollState.StoppedTop;
+                }
+                break;
         }
     }
 }
