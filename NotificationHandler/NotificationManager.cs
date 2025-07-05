@@ -23,24 +23,23 @@ public enum NotificationResponse
 [UdonBehaviourSyncMode(BehaviourSyncMode.NoVariableSync)]
 public class NotificationManager : UdonSharpBehaviour
 {
-    /* Serialize Fields */
     [Header("Notification Prefabs")]
     [SerializeField] private GameObject[] notificationPrefabs;
 
     [Header("Position Settings")]
     [SerializeField] private Vector3 displayOffset = new Vector3(0f, 0f, 1f);  // 頭部の前方
+    [SerializeField] private float followMoveSpeed = 0.05f; // between 0 and 1
+    [SerializeField] private float followRotateSpeed = 0.2f; // between 0 and 1
 
     [Header("Animation Settings")]
     [SerializeField] private float spawnAnimationDuration = 0.5f;
     [SerializeField] private float destroyAnimationDuration = 0.5f;
 
-    /* public */
     public int NotificationInteracted { get; private set; } = 0;  // 0: not interacted, 1: yes, 2: no
     public int LastNotificationType { get; private set; } = -1;
     public int NotificationId { get; private set; } = -1;  // Unique ID
     public bool HasActiveNotification => _currentNotificationObject != null;
 
-    /* private */
     private VRCPlayerApi _localPlayer;
     private GameObject _currentNotificationObject;
     private float _currentDestroyTime = 0;
@@ -66,19 +65,35 @@ public class NotificationManager : UdonSharpBehaviour
         _localPlayer = Networking.LocalPlayer;
         if (_localPlayer == null)
         {
-            Debug.LogError("NotificationManager: Error getting local player");
+            Debug.LogError("[NotificationManager] Networking.LocalPlayer is null");
         }
 
         if (notificationPrefabs == null || notificationPrefabs.Length == 0)
         {
-            Debug.LogError("NotificationManager: No notification prefabs assigned");
+            Debug.LogError("[NotificationManager] No notification prefabs assigned");
             return;
         }
 
         if (notificationPrefabs.Length != (int)NotificationType.Count)
         {
-            Debug.LogError("NotificationManager: Not enough notification prefabs for NotificationType enum");
+            Debug.LogError("[NotificationManager] Value mismatch: notificationPrefabs.Length != (int)NotificationType.Count");
             return;
+        }
+
+        if (spawnAnimationDuration <= 0f || destroyAnimationDuration <= 0f)
+        {
+            Debug.LogError("[NotificationManager] Value range error: AnimationDuration");
+            return;
+        }
+
+        if (followMoveSpeed < 0f || followMoveSpeed > 1f)
+        {
+            Debug.LogError("[NotificationManager] Value range error: FollowMoveSpeed");
+        }
+
+        if (followRotateSpeed < 0f || followRotateSpeed > 1f)
+        {
+            Debug.LogError("[NotificationManager] Value range error: FollowRotateSpeed");
         }
     }
 
@@ -137,22 +152,22 @@ public class NotificationManager : UdonSharpBehaviour
                     }
                     else
                     {
-                        Debug.LogWarning("NotificationManager: Fill Image component not found in Timer Countdown Image");
+                        Debug.LogWarning("[NotificationManager] Fill Image component not found in Timer Countdown Image");
                     }
                 }
                 else
                 {
-                    Debug.LogWarning("NotificationManager: Timer Countdown Image Transform not found in current notification object");
+                    Debug.LogWarning("[NotificationManager] Timer Countdown Image Transform not found in current notification object");
                 }
             }
             else
             {
-                Debug.LogWarning("NotificationManager: Countdown Int TextMeshPro component not found");
+                Debug.LogWarning("[NotificationManager] Countdown Int TextMeshPro component not found");
             }
         }
         else
         {
-            Debug.LogWarning("NotificationManager: Countdown Int Transform not found in current notification object");
+            Debug.LogWarning("[NotificationManager] Countdown Int Transform not found in current notification object");
         }
     }
 
@@ -237,16 +252,30 @@ public class NotificationManager : UdonSharpBehaviour
             _isDestroyAnimationRunning = false;
             _isSpawnAnimationRunning = false;
         }
+        else
+        {
+            Debug.LogWarning("[NotificationManager] Attempted to destroy a null notification object");
+        }
     }
 
     // Update notification position and rotation based on head front
     public override void PostLateUpdate()
     {
-        // Update the position and rotation
         if (_currentNotificationObject != null && _localPlayer != null)
         {
-            GetHeadFrontPositionAndRotation(out Vector3 position, out Quaternion rotation);
-            _currentNotificationObject.transform.SetPositionAndRotation(position, rotation);
+            GetHeadFrontPositionAndRotation(out Vector3 headFrontPosition, out Quaternion headFrontRotation);
+
+            _currentNotificationObject.transform.position = Vector3.Lerp(
+                _currentNotificationObject.transform.position,
+                headFrontPosition,
+                followMoveSpeed
+            );
+
+            _currentNotificationObject.transform.rotation = Quaternion.Slerp(
+                _currentNotificationObject.transform.rotation,
+                headFrontRotation,
+                followRotateSpeed
+            );
         }
     }
 
@@ -254,7 +283,7 @@ public class NotificationManager : UdonSharpBehaviour
     {
         if (_localPlayer == null)
         {
-            Debug.LogWarning("NotificationManager: Local player is null when calculating head front position");
+            Debug.LogWarning("[NotificationManager] Local player is null in GetHeadFrontPositionAndRotation");
             position = Vector3.zero;
             rotation = Quaternion.identity;
             return;
@@ -263,7 +292,6 @@ public class NotificationManager : UdonSharpBehaviour
         var headPosition = _localPlayer.GetBonePosition(HumanBodyBones.Head);
         var headRotation = _localPlayer.GetBoneRotation(HumanBodyBones.Head);
 
-        // 顔前面に配置するため、前方向ベクトルを計算
         Vector3 forwardDirection = headRotation * Vector3.forward;
         Vector3 upDirection = headRotation * Vector3.up;
         Vector3 rightDirection = headRotation * Vector3.right;
@@ -281,7 +309,7 @@ public class NotificationManager : UdonSharpBehaviour
     {
         if (string.IsNullOrEmpty(playerDisplayname))
         {
-            Debug.LogError("NotificationManager: Cannot show notification with empty player display name");
+            Debug.LogError("[NotificationManager] Cannot show notification with empty player display name");
             return;
         }
 
@@ -295,13 +323,13 @@ public class NotificationManager : UdonSharpBehaviour
         int idx = (int)type;
         if (idx < 0 || idx >= notificationPrefabs.Length)
         {
-            Debug.LogError($"NotificationManager: Invalid notification type: {type}");
+            Debug.LogError($"[NotificationManager] Invalid notification type: {type}");
             return;
         }
 
         if (notificationPrefabs[idx] == null)
         {
-            Debug.LogError($"NotificationManager: Notification prefab is null for type: {type}");
+            Debug.LogError($"[NotificationManager] Notification prefab is null for type: {type}");
             return;
         }
 
@@ -316,7 +344,7 @@ public class NotificationManager : UdonSharpBehaviour
         _currentDestroyCountDown = timeout > 0 ? timeout : 0;
         _currentDestroyTimeout = timeout > 0 ? timeout : 0;
 
-        Debug.Log($"NotificationManager: Scheduled for ID: {NotificationId}, Destroy time: {_currentDestroyTime}");
+        Debug.Log($"[NotificationManager] Scheduled for ID: {NotificationId}, Destroy time: {_currentDestroyTime}");
 
         // Instantiate!
         _currentNotificationObject = Instantiate(notificationPrefabs[idx]);
@@ -335,19 +363,19 @@ public class NotificationManager : UdonSharpBehaviour
             if (playerDisplaynameTextTMP != null)
             {
                 playerDisplaynameTextTMP.text += $" {playerDisplayname}";
-                Debug.Log($"NotificationManager: Player displayname set to '{playerDisplayname}'");
+                Debug.Log($"[NotificationManager] Player displayname set to '{playerDisplayname}'");
             }
         }
         else
         {
-            Debug.LogWarning("NotificationManager: Player Displayname Transform not found in notification prefab");
+            Debug.LogWarning("[NotificationManager] Player Displayname Transform not found in notification prefab");
         }
 
         // Hide the timer if timeout <= 0
         Transform countDownTimerTransform = _currentNotificationObject.transform.Find("Canvas/Timer");
         if (countDownTimerTransform == null)
         {
-            Debug.LogWarning("NotificationManager: Timer Transform not found in notification prefab");
+            Debug.LogWarning("[NotificationManager] Timer Transform not found in notification prefab");
         }
         else if (timeout <= 0)
         {
@@ -359,7 +387,7 @@ public class NotificationManager : UdonSharpBehaviour
         NoButton noButton = _currentNotificationObject.GetComponentInChildren<NoButton>();
         if (yesButton == null || noButton == null)
         {
-            Debug.LogError("NotificationManager: YesButton or NoButton component not found in notification prefab");
+            Debug.LogError("[NotificationManager] YesButton or NoButton component not found in notification prefab");
             DestroyCurrentNotification();
             return;
         }
@@ -375,7 +403,7 @@ public class NotificationManager : UdonSharpBehaviour
                 noButton.Init(this, NotificationId);
                 break;
             default:
-                Debug.LogError($"NotificationManager: Unsupported notification type: {type}");
+                Debug.LogError($"[NotificationManager] Unsupported notification type: {type}");
                 break;
         }
     }
@@ -384,7 +412,7 @@ public class NotificationManager : UdonSharpBehaviour
     {
         if (notification == null)
         {
-            Debug.LogError("NotificationManager: Notification is null on interaction");
+            Debug.LogError("[NotificationManager] Notification is null on interaction");
             return;
         }
 
@@ -392,11 +420,12 @@ public class NotificationManager : UdonSharpBehaviour
         int notificationId = notification.NotificationId;
         if (notificationId != NotificationId)
         {
-            Debug.LogWarning($"NotificationManager: Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
+            Debug.LogWarning($"[NotificationManager] Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
             return;
         }
 
         NotificationInteracted = (int)NotificationResponse.Yes;
+        Debug.Log($"[NotificationManager] User clicked Yes, NotificationInteracted: {NotificationInteracted}");
 
         StartDestroyAnimation();
     }
@@ -405,7 +434,7 @@ public class NotificationManager : UdonSharpBehaviour
     {
         if (notification == null)
         {
-            Debug.LogError("NotificationManager: Notification is null on interaction");
+            Debug.LogError("[NotificationManager] Notification is null on interaction");
             return;
         }
 
@@ -413,11 +442,12 @@ public class NotificationManager : UdonSharpBehaviour
         int notificationId = notification.NotificationId;
         if (notificationId != NotificationId)
         {
-            Debug.LogWarning($"NotificationManager: Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
+            Debug.LogWarning($"[NotificationManager] Notification ID mismatch. Expected {NotificationId}, got {notificationId}");
             return;
         }
 
         NotificationInteracted = (int)NotificationResponse.No;
+        Debug.Log($"[NotificationManager] User clicked No, NotificationInteracted: {NotificationInteracted}");
 
         StartDestroyAnimation();
     }
@@ -425,7 +455,7 @@ public class NotificationManager : UdonSharpBehaviour
     public void ResetNotificationInteracted()
     {
         NotificationInteracted = (int)NotificationResponse.None;
-        Debug.Log("NotificationManager: NotificationInteracted reset to None");
+        Debug.Log("[NotificationManager] NotificationInteracted reset to None");
     }
 
     public int GetCurrentNotificationId()
