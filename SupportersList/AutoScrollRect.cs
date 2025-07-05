@@ -15,11 +15,17 @@ public class AutoScrollRect : UdonSharpBehaviour
     private ScrollRect scrollRect;
     private float unitsToScroll;
     private float progressPerSec;
+    private float targetVerticalPosition;
 
     private void Start()
     {
         scrollRect = GetComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = false;
+
         t = 0;
+        state = ScrollState.StoppedTop;
+        targetVerticalPosition = 1f;
     }
 
     private void Update()
@@ -38,6 +44,7 @@ public class AutoScrollRect : UdonSharpBehaviour
         switch (state)
         {
             case ScrollState.StoppedTop:
+                targetVerticalPosition = 1f;
                 t += Time.deltaTime;
                 if (t > timeAtTop)
                 {
@@ -47,6 +54,7 @@ public class AutoScrollRect : UdonSharpBehaviour
                 break;
 
             case ScrollState.StoppedBottom:
+                targetVerticalPosition = 0f;
                 t += Time.deltaTime;
                 if (t > timeAtBottom)
                 {
@@ -56,9 +64,9 @@ public class AutoScrollRect : UdonSharpBehaviour
                 break;
 
             case ScrollState.ScrollDown:
-                scrollRect.verticalNormalizedPosition -= progressPerSec * Time.deltaTime;
+                targetVerticalPosition = scrollRect.verticalNormalizedPosition - progressPerSec * Time.deltaTime;
 
-                if (scrollRect.verticalNormalizedPosition <= 0f)
+                if (targetVerticalPosition <= 0f)
                 {
                     t = 0;
                     state = ScrollState.StoppedBottom;
@@ -66,15 +74,17 @@ public class AutoScrollRect : UdonSharpBehaviour
                 break;
 
             case ScrollState.ScrollUp:
-                scrollRect.verticalNormalizedPosition += progressPerSec * Time.deltaTime;
+                targetVerticalPosition = scrollRect.verticalNormalizedPosition + progressPerSec * Time.deltaTime;
 
-                if (scrollRect.verticalNormalizedPosition >= 1f)
+                if (targetVerticalPosition >= 1f)
                 {
                     t = 0;
                     state = ScrollState.StoppedTop;
                 }
                 break;
         }
+
+        scrollRect.verticalNormalizedPosition = targetVerticalPosition;
     }
 }
 
